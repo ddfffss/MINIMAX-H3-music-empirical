@@ -19,15 +19,16 @@ The most reproducible observation of this whole investigation:
 
 - **32×32 (1024 spatial tokens) = condition-dominated** → the output is "pinned" by the prompt, so a distinctive style survives.
 - **64×64 (4096 spatial tokens) = prior-dominated** → there is more room for the model's trained prior to take over, and the prior's *mode* is the most common audio in its training data — which, for an audiovisual model whose main job is short-form video, is gentle, unobtrusive, background-music-ish audio. Edge styles (horror-funk, metal, etc.) get averaged toward that center.
-- **There are two different "over-smoothing" mechanisms**:
+- **There are three different "over-smoothing" failure modes**:
   - **Canvas over-smoothing (64×64)** = the *style identity* is lost (horror-funk becomes gentle; you get a different song).
   - **Step over-smoothing (60+ steps)** = *dynamic variation* is lost — aggressive denoising treats instrument/vocal expression (swells, attacks, bends) as noise and averages them out, so the same song goes "flat" while its style survives.
-  - The two are independent: canvas decides *which* song you get, steps decide *how much life* that song keeps.
-- **Optimal step count ≈ 25–60**: below ~25 the audio is rough/noisy; 25–60 is the sweet spot (smooth enough, still alive); above ~60 it flattens.
+  - **Denoising overshoot (60+ steps)** = an *AI/robotic artifact* — the vocals pick up a metallic, plastic "electronic" quality that worsens with step count (mild at 50, clear at 60+, worse at 70), as if over-denoising destroys mid-frequency harmonics and introduces a reverse-type noise.
+  - These are independent: canvas decides *which* song you get; steps decide *how much life* — and *how natural* — that song keeps.
+- **Optimal step count ≈ 25–50**: below ~25 the audio is rough/noisy; 25–50 is the sweet spot (clean but retains organic detail); above ~60 it flattens and the vocals turn electronic.
 - **32×32 is the hard minimum** for the canvas (the node validates `min=32`, `step=32`), so it cannot be shrunk further to get even stronger prompt control.
 
 **Practical takeaway**:
-- Want a *specific style* with life → lock 32×32, steps in the 25–60 range.
+- Want a *specific style* with life → lock 32×32, steps in the 25–50 range.
 - Want *short-video-style BGM* → use 64×64; you barely need to describe anything, the prior gives it to you.
 
 ---
