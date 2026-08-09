@@ -119,6 +119,7 @@ None of the findings above are unique to H3 — they map onto well-established r
 |---|---|---|
 | **Canvas size = condition-vs-prior balance** (32 keeps style, 64 drifts to the training mode) | Classifier-free guidance (CFG) scale controls conditioning strength vs. prior; with no explicit CFG knob in this pipeline, latent resolution acts as a proxy conditioning-strength control | Ho & Salimans, 2022 |
 | **Naming an artist/song + precise instructions reproduced a real passage** (deformed "Billie Jean") | Text-to-music models have a documented tendency to plagiarize their training data; the paper proposes beat-synchronous mixup to reduce it | Chen et al., 2023 (MusicLDM) |
+| **Regurgitation appears suddenly at a threshold, not gradually** (a clear "critical point": below it the output is pure style, at/above it the memorized passage snaps in) | Memorization in diffusion is a discrete basin of attraction: denoising converges to the nearest basin, and when conditioning similarity crosses a critical threshold the trajectory snaps from the "style basin" into the "memorized-sample basin" — a phase transition, not smooth blending | Carlini et al., 2023 |
 | **60+ steps flatten dynamics and give vocals a metallic/robotic artifact** | Over-denoising regresses toward the mean (DDPM-style over-sampling); analogous audio-side artifacts are known as "vocoder artifacts" in generated speech | Ho et al., 2020; also see Stable Audio Open issue discussions #228 "noisy and jittered", #247 "strange/odd noises" |
 | **The prior's mode is short-video BGM** (training-data majority wins as conditioning loosens) | Latent diffusion generation lives in the prior; the output distribution reflects training-data composition | Rombach et al., 2022; Liu et al., 2023 (AudioLDM) |
 | **Regurgitation / prior effects vary by conditioning strength** | Conditioned diffusion responses to different CFG scales are typically inspected at 3 / 6 / 9 | Stable Audio Open tooling docs (`demo_cfg_scales`) |
@@ -131,6 +132,7 @@ None of the findings above are unique to H3 — they map onto well-established r
 4. Chen, K., et al. (2023). *MusicLDM: Enhancing Novelty in Text-to-Music Generation Using Beat-Synchronous Mixup Strategies*. arXiv:2308.01546. https://arxiv.org/abs/2308.01546
 5. Liu, H., et al. (2023). *AudioLDM: Text-to-Audio Generation with Latent Diffusion Models*. arXiv:2301.12503. https://arxiv.org/abs/2301.12503
 6. Evans, Z., et al. (2024). *Stable Audio Open*. arXiv:2407.14358. https://arxiv.org/abs/2407.14358
+7. Carlini, N., et al. (2023). *Extracting Training Data from Diffusion Models*. arXiv:2301.13188. https://arxiv.org/abs/2301.13188
 
 > Note: full author lists are abbreviated to "First author et al." here; the arXiv links above contain the complete author lists.
 
