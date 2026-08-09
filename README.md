@@ -1,130 +1,151 @@
-# MiniMax H3-as-Suno: Empirical Notes on Local Music Generation
+# MiniMax H3-as-Suno: Empirical Observations on Using a Video-Audio Diffusion Model as a Local Music Generator
 
-> These are **empirical observations and reasonable inferences**, not official or authoritative conclusions. They come from repeated A/B listening tests on **one machine, one model configuration**. They are **not guaranteed to generalize** to other GPUs, other quantization builds, other CLIPs, or other versions of the model.
-
-**Acknowledgement**: This work is built entirely on [Deveraux-Parker/minimax-h3-voice-api](https://github.com/Deveraux-Parker/minimax-h3-voice-api) — its `song_prompt()` / `instrumental_prompt()` assemblers and its 99 genre presets are the foundation of every test. No code from that project was modified; this repository is a standalone write-up.
-
-**Test environment**: local ComfyUI + MiniMax H3 (quantized FL2VA build), NVIDIA 8 GB VRAM, bf16 CLIP.
+**Author**: ddfffss
+**Date**: 2026-08
+**Status**: Empirical research notes (preprint-style); not peer-reviewed
 
 ---
 
-## ⭐ The headline finding: canvas size is the style knob, step count is the smoothness knob
+## Abstract
 
-The most reproducible observation of this whole investigation:
+MiniMax H3 is an open, joint audio-video generative diffusion model whose primary domain is short-form video. This report documents a series of A/B experiments in which H3 was used as a *local* text-to-music generator (the "H3-as-Suno" approach: a minimal 32×32 latent canvas, audio-only decode). We report reproducible observations on how the latent canvas size and the denoising step count shape the output, how CLIP precision and base-model quantization affect audio quality, and which prompting practices reliably produce usable music. Three findings stand out: (i) **latent canvas size acts as an effective conditioning-strength (CFG-like) control** — a 32×32 canvas keeps the prompt-pinned style, while a 64×64 canvas lets the model's prior dominate and drifts toward the training-distribution mode (which, for a video-domain model, is "short-video BGM"); (ii) **denoising step count has a sweet spot (~25–50)** — fewer steps are noisy, more steps flatten dynamics and introduce a metallic "AI-robotic" vocal artifact; (iii) **regurgitation of memorized training material appears as a phase transition**, not a gradual blend — when prompt similarity to a known song crosses a critical threshold, the model snaps from "in the style of" into recalling a deformed copy of the actual passage. These observations are consistent with well-established results in diffusion-model research (classifier-free guidance, latent diffusion, memorization/extraction, over-denoising), which we cite and map to our findings. All conclusions are empirical and specific to the tested environment.
+
+---
+
+## 1. Introduction
+
+Generative video models increasingly expose their audio channel as a by-product of audiovisual training. MiniMax H3 (an open "FLOW_AV" joint video-audio diffusion transformer) is one such model: given text and optional references it generates synchronized video *and* audio. The community quickly noticed that by collapsing the video canvas to a tiny 32×32 latent and decoding only the audio, H3 can be driven as a music generator — a cheap, fully local alternative to dedicated text-to-music services. The [minimax-h3-voice-api](https://github.com/Deveraux-Parker/minimax-h3-voice-api) project packages exactly this path (`song_prompt()` / `instrumental_prompt()` assemblers plus 99 genre presets).
+
+However, using a video-first model as a music generator exposes an unusual parameter space: the latent *canvas* (which in a music-only workflow is semantically meaningless) and the *denoising step count* become the main knobs, alongside the text prompt. The goal of this work is to map how these knobs interact, to identify which practices are reliable, and to connect the observations to the broader diffusion-model literature.
+
+---
+
+## 2. Methodology
+
+### 2.1 Environment
+
+| Item | Value |
+|---|---|
+| Model | MiniMax H3, quantized FL2VA build (pruned INT8 UNET) |
+| Text encoder | Qwen3-VL 32B, bf16 CLIP |
+| Audio VAE | `minimax_h3_audio_vae_fp32` |
+| Hardware | NVIDIA 8 GB VRAM (a memory-constrained, bandwidth-limited setup) |
+| Software | Local ComfyUI; workflows assembled from the standard H3 graph (loader → conditioning → sampler → audio decode) |
+| Prompt assembler | `song_prompt()` / `instrumental_prompt()` from minimax-h3-voice-api (unmodified) |
+
+### 2.2 Protocol
+
+Each A/B changed **exactly one variable** at a time (canvas, steps, CLIP, or prompt wording), holding seed, sampler (`res_multistep`), scheduler (`simple`), and lyrics constant. Judgements were by repeated human listening on 60-second outputs. This is a qualitative study; no quantitative audio metrics were used.
+
+---
+
+## 3. Results
+
+### 3.1 Canvas size: the style-versus-prior knob
+
+The central, most reproducible result: **canvas size determines whether the prompt's style survives, and this holds at every step count tested (5–70).**
 
 | | 32×32 canvas | 64×64 canvas |
 |---|---|---|
-| **Any step count (5–70 tested)** | keeps the requested style (e.g. horror-funk stays horror-funk) | drifts toward a gentle, "modern" short-video-BGM sound, even at 5 steps |
-| Effect of raising steps | rough → smooth → **flat** (see below) | smooth → **flat** |
+| Any step count (5–70) | keeps the requested style (e.g. "horror-funk" stays horror-funk) | drifts toward a gentle, "modern" short-video-BGM sound — even at 5 steps |
 
-- **32×32 (1024 spatial tokens) = condition-dominated** → the output is "pinned" by the prompt, so a distinctive style survives.
-- **64×64 (4096 spatial tokens) = prior-dominated** → there is more room for the model's trained prior to take over, and the prior's *mode* is the most common audio in its training data — which, for an audiovisual model whose main job is short-form video, is gentle, unobtrusive, background-music-ish audio. Edge styles (horror-funk, metal, etc.) get averaged toward that center.
-- **There are three different "over-smoothing" failure modes**:
-  - **Canvas over-smoothing (64×64)** = the *style identity* is lost (horror-funk becomes gentle; you get a different song).
-  - **Step over-smoothing (60+ steps)** = *dynamic variation* is lost — aggressive denoising treats instrument/vocal expression (swells, attacks, bends) as noise and averages them out, so the same song goes "flat" while its style survives.
-  - **Denoising overshoot (60+ steps)** = an *AI/robotic artifact* — the vocals pick up a metallic, plastic "electronic" quality that worsens with step count (mild at 50, clear at 60+, worse at 70), as if over-denoising destroys mid-frequency harmonics and introduces a reverse-type noise.
-  - These are independent: canvas decides *which* song you get; steps decide *how much life* — and *how natural* — that song keeps.
-- **Optimal step count ≈ 25–50**: below ~25 the audio is rough/noisy; 25–50 is the sweet spot (clean but retains organic detail); above ~60 it flattens and the vocals turn electronic.
-- **32×32 is the hard minimum** for the canvas (the node validates `min=32`, `step=32`), so it cannot be shrunk further to get even stronger prompt control.
+A 32×32 canvas (1024 spatial tokens) is *condition-dominated*: the output is pinned by the prompt. A 64×64 canvas (4096 tokens) is *prior-dominated*: with four times the spatial capacity, the model's trained prior contributes more, and its mode — for a short-video-domain model — is unobtrusive background music. Edge styles (horror-funk, metal, breakcore-adjacent) are averaged toward that mode. **32×32 is the canvas hard minimum** (the node validates `min=32`, `step=32`); it cannot be reduced further to obtain even stronger prompt control.
 
-**Practical takeaway**:
-- Want a *specific style* with life → lock 32×32, steps in the 25–50 range.
-- Want *short-video-style BGM* → use 64×64; you barely need to describe anything, the prior gives it to you.
+### 3.2 Step count: the smoothness knob with a sweet spot
 
----
+Step count moves the output **within** the basin chosen by prompt × canvas; it does not change the style identity. Two failure modes appear at the extremes:
 
-## 1. The steps × canvas grid (core experiment)
+| Step regime | Observed behaviour |
+|---|---|
+| < ~25 | rough, noisy; detail present but unpolished |
+| ~25–50 | clean, coherent, retains expressive dynamics — the sweet spot |
+| > ~60 | **flattened dynamics** (instrument/vocal variation treated as noise and averaged out) and **an "AI-robotic" vocal artifact** (metallic/plastic timbre) that worsens with steps (mild at 50, clear at 60+, worse at 70) |
 
-Same prompt (a "Thriller-era" horror-funk song), same seed, same bf16 CLIP; only canvas and steps varied:
-
-| | 5 steps | 10 | 15 | 25 | 50–70 |
-|---|---|---|---|---|---|
-| 32×32 | horror ✓ | horror ✓ | horror ✓ | horror ✓ | smooth + horror (still under test) |
-| 64×64 | modern/gentle | modern/gentle | modern/gentle | modern/gentle | modern/gentle |
-
-The 64×64 result holds **even at 5 steps**, which is the cleanest evidence that the canvas — not the steps — is what pulls the audio toward the short-video centroid.
-
----
-
-## 2. CLIP and base-model differences
-
-Different text encoders and diffusion base models measurably change the music output:
+### 3.3 CLIP precision and base-model quantization
 
 | Variable | Observed effect |
 |---|---|
-| **bf16 CLIP vs int8 CLIP** | bf16 gives clearly better instrument separation; int8 tends to smear instruments into one blob. Same UNET/prompt/seed, only the encoder precision changes. |
-| **pruned int8 UNET vs full int8 UNET** | full int8 (≈34 GB) is impractical on 8 GB VRAM (constant pagefile swapping, per-step disk reads). The difference this test could isolate was mostly I/O-bound, not quality-bound. |
-| **w4a8 base** | audio quality is degraded vs the int8 line (this project's earlier A/B). |
-| **Different video base variants (pruned/full/w4a8)** | each shifts the audio flavor; on this rig, pruned int8 + bf16 CLIP was the practical sweet spot. |
+| bf16 vs int8 CLIP | bf16 gives clearly better instrument separation; int8 tends to smear instruments into a single blob (same UNET/prompt/seed). |
+| pruned vs full INT8 UNET | full INT8 (≈34 GB) is impractical on 8 GB VRAM (constant pagefile swapping); the quality difference was not isolable from the I/O penalty on this rig. |
+| w4a8 base | audio quality degraded vs the INT8 line. |
 
-If you run a different CLIP or a different base build, expect the "how much the prompt sticks" balance to shift.
+On this rig the practical sweet spot was pruned-INT8 UNET + bf16 CLIP.
 
----
+### 3.4 Prompting discipline
 
-## 3. Prompting discipline (13 empirical lessons)
+Thirteen practices were repeatedly validated (details in the repository history). The most consequential:
 
-1. **Keep music prompts ≤ ~4000 chars**: style anchor + arrangement anchors + one vocal line. Every extra instruction competes for attention; patch-on descriptions have negative marginal returns.
-2. **Single name beats double name**: naming two artists/genres causes cluster flicker — more varied singing but more breakage.
-3. **Don't over-specify vocal techniques** (`hiccuping ad-libs`, `trembling high notes`, `staccato`) — the model renders them as strange voices. Use "in X's unmistakable style, smooth and powerful" level of simplicity.
-4. **Negatives backfire** (`never over-decorated` summons over-decoration). Use structure, not bans.
-5. **Change, don't add**: when adding a new instruction, delete the old one it contradicts. `explosive` + `authentically early-1980s` = contradiction → mud.
-6. **Vintage/analog production language invites mud**: tape saturation / gated-reverb / analog character → the audio VAE renders it blurry. Anchor era lightly ("Thriller-era") without production fingerprints.
-7. **Verse-led Japanese ballads = strong "vocal-first" prior**: adding backing, locking a groove, or restructuring can't override it; accept it rather than fight it. Groove-based genres (funk) don't have this.
-8. **Per-section directing does not work**: hand-written timestamp storyboards (`From X to Y + intensity`) are only partially followed and make the whole piece bizarre. Use the prose-and-section-tags approach.
-9. **IP name + precise rhythmic instructions risks regurgitating the original song**: naming a specific artist/song plus per-section rhythm instructions drifted into reproducing a real musical passage (deformed). Name IPs in prose style only.
-10. **Modern-word clusters override era anchors**: `stadium/explosive/slam` is effectively a "nu-funk spell" that beats a "Thriller-era 80s" anchor. For era-authentic sound, use era-authentic words (80s synth-funk: LinnDrum, synth bass, boogie syncopation).
-11. **The whole prompt must be one coherent cluster**: style words / lyrics / scene / vocal must all point the same direction. Cross-cluster mixing (e.g. "midnight-horror" lyrics on a smooth-R&B groove) is reliably disharmonious.
-12. **The naming model** — see section 4.
-13. **Canvas/steps split** — see the headline finding above.
+1. **Keep music prompts ≤ ~4000 characters** (style anchor + arrangement anchors + one vocal line); extra patch-on instructions have negative marginal returns (attention budget).
+2. **Single name beats double name** — naming two artists/genres causes cluster flicker and more breakage.
+3. **Do not over-specify vocal technique** — concrete singing-technique terms render as strange voices; "in X's unmistakable style, smooth and powerful" is sufficient.
+4. **Negatives backfire** (`never over-decorated` summons over-decoration); use structure, not bans.
+5. **Change, don't add** — a new instruction must delete the old one it contradicts (e.g. `explosive` + `authentically early-1980s` → mud).
+6. **Vintage/analog production language invites blur** (tape saturation / gated-reverb / analog character → blurred audio); anchor era lightly.
+7. **Verse-led Japanese ballads exhibit a strong "vocal-first" prior** that structuring cannot override; groove-based genres do not.
+8. **Per-section (timestamp) directing does not work** on this pipeline; use prose + section tags.
+9. **IP name + precise rhythmic instructions risk regurgitating the original song** (see §4.2).
+10. **Modern-word clusters override era anchors** (a "nu-funk spell"); use era-authentic words for era-authentic output.
+11. **The prompt must be one coherent cluster** (style/lyrics/scene/vocal aligned); cross-cluster mixing is reliably disharmonious.
+12–13. Naming model and canvas/steps split — see §4.1 and §3.1–3.2.
 
----
-
-## 4. The naming model (what an artist/song name does)
+### 3.5 The naming model
 
 | Dimension | Finding |
 |---|---|
-| Vocal identity | **Determined by technique words, but only inside a matching cluster.** MJ technique words in a Thriller cluster → MJ voice. Put them in a metalcore cluster → voice is not MJ *and* the metalcore is dragged toward generic rock. |
+| Vocal identity | Determined by *technique words*, but only inside a matching cluster (MJ technique words in a metalcore cluster neither produce an MJ voice nor preserve the metalcore). |
 | Name strength | Weak style nudge; cannot beat a competing word cluster. |
-| Name presence | Cohesion anchor; the whole track is more coherent with it. |
-| Name identity (which song/album) | ≈ no effect; direction nearly identical, only details differ. |
-| Content words | The real driver; delete the name and keep the content words and the style mostly survives. |
-
-Practical: to get a specific singer's voice, write that singer's technique words — inside a matching cluster. Include the name for cohesion, but don't expect a stronger name to override other clusters.
+| Name presence | Acts as a cohesion anchor. |
+| Name identity (which song/album) | ≈ no effect (nearly identical direction, only detail differences). |
+| Content words | The primary driver (deleting the name while keeping content words largely preserves the style). |
 
 ---
 
-## 5. Capability boundaries (why H3 music "has a ceiling")
+## 4. Discussion
 
-1. **Training-distribution bias**: H3's musical priors were shaped by music *in video*. Mainstream, formulaic genres generalize well; niche edge genres (e.g. breakcore) come out but miss the genre's soul.
-2. **Audio-VAE synthesis ceiling**: dense-harmonic timbres (distorted electric guitar) render blurry no matter the prompt.
-3. **Operational limits**: 60 s is ~4× the training domain (5–15 s); attention budget; canvas coupling.
-4. **Weak cross-cluster mixing**: clusters must match; mixing clusters dilutes both sides.
+### 4.1 Interpretation of the canvas effect
 
----
+We interpret the canvas effect as a **proxy for effective conditioning strength**. In classifier-free guidance (CFG), a guidance weight controls the balance between condition and prior: high weights pin the output to the prompt, low weights let the prior dominate. In this pipeline there is no explicit CFG knob (a basic guider is used), but reducing the latent canvas from 64×64 to 32×32 has the same *observable* effect as raising conditioning strength — the output becomes more prompt-pinned. This is consistent with latent-diffusion results in which spatial resolution controls the number of tokens over which conditioning must spread, and with the well-known fact that the generative prior is a sample from the training distribution (so its mode reflects training-data composition).
 
-## 6. Caveats / disclaimer
+### 4.2 Regurgitation as a phase transition
 
-- **Empirical only.** Based on one machine (8 GB VRAM) and one quantized H3 build. Not guaranteed to hold on other hardware, quantization variants, CLIPs, or model versions.
-- **Subjective judging.** Every "better/muddier/gentler" came from human listening, not quantitative metrics.
-- **Not an authoritative statement about MiniMax H3's capabilities.** Different builds may behave differently.
-- **No private or authorized information included**: no API keys, no machine paths, no personal data.
+When a prompt carried a large amount of artist- and song-specific content (name + era + precise rhythmic structure), the output occasionally contained a deformed copy of a real, memorized passage (e.g. a "Billie Jean" bassline). Two properties are notable: (i) this matches the documented tendency of text-to-music models to plagiarize training material (MusicLDM); and (ii) **the phenomenon appears at a threshold, not gradually** — below a certain prompt-to-sample similarity the output is pure style with no trace of the sample, while at or above the threshold a memorized fragment snaps in. We interpret this as a **basin-of-attraction phase transition**: diffusion denoising converges to the nearest basin, and crossing a critical conditioning threshold moves the trajectory from the "style basin" into the "memorized-sample basin". This is consistent with empirical results on memorization and training-data extraction from diffusion models, which find that generated outputs either are or are not near-duplicates of training samples — a discrete outcome.
 
----
-
-## 7. Related research & how our observations map to known results
-
-None of the findings above are unique to H3 — they map onto well-established results in diffusion-based audio/music generation. Mapping each observation to its prior art:
+### 4.3 Relationship to prior work
 
 | Our observation | Known result / concept | Reference |
 |---|---|---|
-| **Canvas size = condition-vs-prior balance** (32 keeps style, 64 drifts to the training mode) | Classifier-free guidance (CFG) scale controls conditioning strength vs. prior; with no explicit CFG knob in this pipeline, latent resolution acts as a proxy conditioning-strength control | Ho & Salimans, 2022 |
-| **Naming an artist/song + precise instructions reproduced a real passage** (deformed "Billie Jean") | Text-to-music models have a documented tendency to plagiarize their training data; the paper proposes beat-synchronous mixup to reduce it | Chen et al., 2023 (MusicLDM) |
-| **Regurgitation appears suddenly at a threshold, not gradually** (a clear "critical point": below it the output is pure style, at/above it the memorized passage snaps in) | Memorization in diffusion is a discrete basin of attraction: denoising converges to the nearest basin, and when conditioning similarity crosses a critical threshold the trajectory snaps from the "style basin" into the "memorized-sample basin" — a phase transition, not smooth blending | Carlini et al., 2023 |
-| **60+ steps flatten dynamics and give vocals a metallic/robotic artifact** | Over-denoising regresses toward the mean (DDPM-style over-sampling); analogous audio-side artifacts are known as "vocoder artifacts" in generated speech | Ho et al., 2020; also see Stable Audio Open issue discussions #228 "noisy and jittered", #247 "strange/odd noises" |
-| **The prior's mode is short-video BGM** (training-data majority wins as conditioning loosens) | Latent diffusion generation lives in the prior; the output distribution reflects training-data composition | Rombach et al., 2022; Liu et al., 2023 (AudioLDM) |
-| **Regurgitation / prior effects vary by conditioning strength** | Conditioned diffusion responses to different CFG scales are typically inspected at 3 / 6 / 9 | Stable Audio Open tooling docs (`demo_cfg_scales`) |
+| Canvas = condition-vs-prior balance | Classifier-free guidance scale controls conditioning strength | Ho & Salimans, 2022 |
+| Latent resolution changes conditioning spread | Latent diffusion in compressed space | Rombach et al., 2022 |
+| Regurgitation of memorized songs | Text-to-music models plagiarize training data; mixup reduces it | Chen et al. (MusicLDM), 2023 |
+| Regurgitation as a threshold/discrete event | Memorization / training-data extraction from diffusion models | Carlini et al., 2023 |
+| Prior mode = short-video BGM | Latent audio diffusion output reflects training-data composition | Liu et al. (AudioLDM), 2023 |
+| Over-denoising → flat + robotic artifact | Over-sampling regresses to the mean (DDPM dynamics); audio artifacts documented in generated speech/music | Ho et al., 2020; Stable Audio Open issues #228/#247 |
+| Conditioning strength as a tuning dimension | Practitioners inspect CFG at 3/6/9 | Stable Audio Open tooling docs |
 
-### References
+---
+
+## 5. Limitations
+
+- **Single-environment, single-build, single-hardware** (8 GB VRAM, one quantized H3 build, bf16 CLIP). Results may not transfer across quantization variants, GPUs, or model versions.
+- **Qualitative judging only** — no quantitative audio metrics.
+- **Not an authoritative statement about MiniMax H3** — the findings describe the tested build's behaviour.
+- The "phase transition" and "CFG-proxy" interpretations are **inferences**, not proven mechanisms; they are offered as plausible, prior-art-consistent explanations.
+
+---
+
+## 6. Conclusion
+
+MiniMax H3 can produce usable music locally, but its behaviour is governed by two knobs that a dedicated music model would not expose: the **latent canvas** (which acts as a conditioning-strength control and determines whether a requested style survives) and the **denoising step count** (which has a ~25–50 sweet spot beyond which dynamics flatten and vocals turn robotic). Prompting is bounded by an attention budget and by the requirement that the whole prompt form one coherent stylistic cluster. The observed behaviours — style-versus-prior balance, over-denoising artifacts, and thresholded regurgitation — all map onto established diffusion-model phenomena, and are reported here as empirical notes to save future users of this pipeline the repeated trial-and-error.
+
+---
+
+## Acknowledgements
+
+This work is built entirely on [Deveraux-Parker/minimax-h3-voice-api](https://github.com/Deveraux-Parker/minimax-h3-voice-api). No code from that project was modified; this document is an independent write-up.
+
+---
+
+## References
 
 1. Ho, J., Jain, A., & Abbeel, P. (2020). *Denoising Diffusion Probabilistic Models*. arXiv:2006.11239. https://arxiv.org/abs/2006.11239
 2. Ho, J., & Salimans, T. (2022). *Classifier-Free Diffusion Guidance*. arXiv:2207.12598. https://arxiv.org/abs/2207.12598
@@ -134,10 +155,4 @@ None of the findings above are unique to H3 — they map onto well-established r
 6. Evans, Z., et al. (2024). *Stable Audio Open*. arXiv:2407.14358. https://arxiv.org/abs/2407.14358
 7. Carlini, N., et al. (2023). *Extracting Training Data from Diffusion Models*. arXiv:2301.13188. https://arxiv.org/abs/2301.13188
 
-> Note: full author lists are abbreviated to "First author et al." here; the arXiv links above contain the complete author lists.
-
----
-
-## License / note
-
-This is a research write-up, not affiliated with MiniMax. Reuse at your own discretion; cite the original `minimax-h3-voice-api` if you build on its tooling.
+> Note: full author lists are abbreviated to "First author et al." here; the arXiv links above contain the complete author lists. No API keys, machine paths, or personal data are included.
