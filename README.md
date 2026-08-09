@@ -111,6 +111,31 @@ Practical: to get a specific singer's voice, write that singer's technique words
 
 ---
 
+## 7. Related research & how our observations map to known results
+
+None of the findings above are unique to H3 — they map onto well-established results in diffusion-based audio/music generation. Mapping each observation to its prior art:
+
+| Our observation | Known result / concept | Reference |
+|---|---|---|
+| **Canvas size = condition-vs-prior balance** (32 keeps style, 64 drifts to the training mode) | Classifier-free guidance (CFG) scale controls conditioning strength vs. prior; with no explicit CFG knob in this pipeline, latent resolution acts as a proxy conditioning-strength control | Ho & Salimans, 2022 |
+| **Naming an artist/song + precise instructions reproduced a real passage** (deformed "Billie Jean") | Text-to-music models have a documented tendency to plagiarize their training data; the paper proposes beat-synchronous mixup to reduce it | Chen et al., 2023 (MusicLDM) |
+| **60+ steps flatten dynamics and give vocals a metallic/robotic artifact** | Over-denoising regresses toward the mean (DDPM-style over-sampling); analogous audio-side artifacts are known as "vocoder artifacts" in generated speech | Ho et al., 2020; also see Stable Audio Open issue discussions #228 "noisy and jittered", #247 "strange/odd noises" |
+| **The prior's mode is short-video BGM** (training-data majority wins as conditioning loosens) | Latent diffusion generation lives in the prior; the output distribution reflects training-data composition | Rombach et al., 2022; Liu et al., 2023 (AudioLDM) |
+| **Regurgitation / prior effects vary by conditioning strength** | Conditioned diffusion responses to different CFG scales are typically inspected at 3 / 6 / 9 | Stable Audio Open tooling docs (`demo_cfg_scales`) |
+
+### References
+
+1. Ho, J., Jain, A., & Abbeel, P. (2020). *Denoising Diffusion Probabilistic Models*. arXiv:2006.11239. https://arxiv.org/abs/2006.11239
+2. Ho, J., & Salimans, T. (2022). *Classifier-Free Diffusion Guidance*. arXiv:2207.12598. https://arxiv.org/abs/2207.12598
+3. Rombach, R., Blattmann, A., Lorenz, D., Esser, P., & Ommer, B. (2022). *High-Resolution Image Synthesis with Latent Diffusion Models*. arXiv:2112.10752. https://arxiv.org/abs/2112.10752
+4. Chen, K., et al. (2023). *MusicLDM: Enhancing Novelty in Text-to-Music Generation Using Beat-Synchronous Mixup Strategies*. arXiv:2308.01546. https://arxiv.org/abs/2308.01546
+5. Liu, H., et al. (2023). *AudioLDM: Text-to-Audio Generation with Latent Diffusion Models*. arXiv:2301.12503. https://arxiv.org/abs/2301.12503
+6. Evans, Z., et al. (2024). *Stable Audio Open*. arXiv:2407.14358. https://arxiv.org/abs/2407.14358
+
+> Note: full author lists are abbreviated to "First author et al." here; the arXiv links above contain the complete author lists.
+
+---
+
 ## License / note
 
 This is a research write-up, not affiliated with MiniMax. Reuse at your own discretion; cite the original `minimax-h3-voice-api` if you build on its tooling.
